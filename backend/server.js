@@ -8,12 +8,17 @@ require('./cron');
 const app = express();
 const server = http.createServer(app);
 
+// CORS configuration for different environments
+const corsOrigin = process.env.NODE_ENV === 'production'
+  ? process.env.FRONTEND_URL
+  : 'http://localhost:5173';
+
 const io = new Server(server, {
-  cors: { origin: 'http://localhost:5173', methods: ['GET', 'POST'] }
+  cors: { origin: corsOrigin, methods: ['GET', 'POST'] }
 });
 
 // Middleware
-app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
 // Make io accessible inside routes

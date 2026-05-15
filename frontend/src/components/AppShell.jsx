@@ -94,9 +94,14 @@ export default function AppShell({ title, subtitle, children }) {
             <h1 className="topbar-title">{title}</h1>
             <p className="topbar-subtitle">{subtitle}</p>
           </div>
-          <div className="topbar-status">
-            <span className={`status-dot${socketConnected ? '' : ' offline'}`} />
-            {socketConnected ? 'Live system' : 'Offline mode'}
+          <div className="topbar-controls">
+            <div className="topbar-status">
+              <span className={`status-dot${socketConnected ? '' : ' offline'}`} />
+              {socketConnected ? 'Live system' : 'Offline mode'}
+            </div>
+            <button className="topbar-logout" type="button" onClick={logout} title="Logout">
+              Logout
+            </button>
           </div>
         </header>
 

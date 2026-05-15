@@ -382,15 +382,36 @@ export default function TeacherAttendance() {
             </div>
           )}
 
-          <div className="submit-bar">
-            <p>
-              {hasExistingAttendance
-                ? 'Existing attendance can be edited only within the teacher edit window.'
-                : 'Review the roster before submitting. Duplicate sessions are blocked by the backend.'}
-            </p>
-            <button className="primary-button" type="submit" disabled={saving || students.length === 0}>
-              {saving ? 'Saving...' : hasExistingAttendance ? 'Save Changes' : 'Submit Attendance'}
-            </button>
+          <div className="attendance-confirmation">
+            <div className="confirmation-summary">
+              <div className="confirmation-item">
+                <span className="confirmation-label">Total Students</span>
+                <span className="confirmation-value">{students.length}</span>
+              </div>
+              <div className="confirmation-item">
+                <span className="confirmation-label">Present</span>
+                <span className="confirmation-value status-present">{counts.P}</span>
+              </div>
+              <div className="confirmation-item">
+                <span className="confirmation-label">Late</span>
+                <span className="confirmation-value status-late">{counts.L}</span>
+              </div>
+              <div className="confirmation-item highlight">
+                <span className="confirmation-label">⚠️ Absent</span>
+                <span className="confirmation-value status-absent">{counts.A}</span>
+              </div>
+            </div>
+
+            <div className="submit-bar">
+              <p>
+                {hasExistingAttendance
+                  ? 'Existing attendance can be edited only within the teacher edit window.'
+                  : 'Review the roster before submitting. Duplicate sessions are blocked by the backend.'}
+              </p>
+              <button className="primary-button" type="submit" disabled={saving || students.length === 0}>
+                {saving ? 'Saving...' : hasExistingAttendance ? 'Save Changes' : 'Submit Attendance'}
+              </button>
+            </div>
           </div>
         </section>
       </form>

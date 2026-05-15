@@ -10,7 +10,10 @@ const server = http.createServer(app);
 
 // CORS configuration for different environments
 const corsOrigin = process.env.NODE_ENV === 'production'
-  ? process.env.FRONTEND_URL
+  ? [
+      process.env.FRONTEND_URL,
+      /\.vercel\.app$/  // allows all vercel preview URLs
+    ]
   : 'http://localhost:5173';
 
 const io = new Server(server, {

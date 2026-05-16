@@ -212,10 +212,15 @@ function renderNotificationHtml(message) {
 
 function getGmailTransporter() {
   if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) {
+    console.error('Gmail config missing:', {
+      GMAIL_USER: process.env.GMAIL_USER ? '***configured***' : '❌ NOT SET',
+      GMAIL_PASS: process.env.GMAIL_PASS ? '***configured***' : '❌ NOT SET',
+    });
     throw new Error('GMAIL_USER and GMAIL_PASS must be configured');
   }
 
   if (!gmailTransporter) {
+    console.log('Creating Gmail transporter for:', process.env.GMAIL_USER);
     gmailTransporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -223,6 +228,7 @@ function getGmailTransporter() {
         pass: process.env.GMAIL_PASS,
       },
     });
+    console.log('Gmail transporter created successfully');
   }
 
   return gmailTransporter;
@@ -235,15 +241,27 @@ async function sendGmailEmail(email, message, triggerType) {
 
   const to = getNotificationRecipient(email);
   const transporter = getGmailTransporter();
-  const info = await transporter.sendMail({
-    from: `"Campus Connect" <${process.env.GMAIL_USER}>`,
-    to,
-    subject: getEmailSubject(triggerType),
-    text: message,
-    html: renderNotificationHtml(message),
-  });
+  try {
+    console.log('Attempting to send email to:', to);
+    const info = await transporter.sendMail({
+      from: `"Campus Connect" <${process.env.GMAIL_USER}>`,
+      to,
+      subject: getEmailSubject(triggerType),
+      text: message,
+      html: renderNotificationHtml(message),
+    });
+    console.log('Email sent successfully:', info.messageId);
 
-  return { id: info.messageId, accepted: info.accepted, rejected: info.rejected };
+    return { id: info.messageId, accepted: info.accepted, rejected: info.rejected };
+  } catch (err) {
+    console.error('SMTP error details:', {
+      code: err.code,
+      message: err.message,
+      command: err.command,
+      response: err.response,
+    });
+    throw err;
+  }
 }
 
 async function dispatchSMS(recipient, message, studentId, triggerType, retryCount = 0) {

@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const db = require('../config/db');
 const auth = require('../middleware/auth');
+const { normalizeThreshold } = require('../utils/attendancePrediction');
 
 function handleDbError(res, err) {
   if (err.code === 'ER_DUP_ENTRY') {
@@ -96,6 +97,106 @@ router.delete('/departments/:id', auth(['admin']), async (req, res) => {
 
 // Classes
 
+// GET /api/admin/terms
+router.get('/terms', auth(['admin', 'hod', 'teacher', 'student']), async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT id, name, academic_year, semester, start_date, end_date, is_active
+      FROM academic_terms
+      ORDER BY start_date DESC, id DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/admin/terms
+router.post('/terms', auth(['admin']), async (req, res) => {
+  const { name, academic_year, semester, start_date, end_date, is_active } = req.body;
+  if (!name || !academic_year || !semester || !start_date || !end_date) {
+    return res.status(400).json({ message: 'name, academic_year, semester, start_date, end_date required' });
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (is_active) {
+      await conn.query('UPDATE academic_terms SET is_active = 0');
+    }
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO academic_terms (name, academic_year, semester, start_date, end_date, is_active)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+      [name, academic_year, Number(semester), start_date, end_date, is_active ? 1 : 0]
+    );
+
+    await conn.commit();
+    res.status(201).json({
+      id: result.insertId,
+      name,
+      academic_year,
+      semester: Number(semester),
+      start_date,
+      end_date,
+      is_active: is_active ? 1 : 0,
+    });
+  } catch (err) {
+    await conn.rollback();
+    handleDbError(res, err);
+  } finally {
+    conn.release();
+  }
+});
+
+// PUT /api/admin/terms/:id
+router.put('/terms/:id', auth(['admin']), async (req, res) => {
+  const { name, academic_year, semester, start_date, end_date, is_active } = req.body;
+  if (!name || !academic_year || !semester || !start_date || !end_date) {
+    return res.status(400).json({ message: 'name, academic_year, semester, start_date, end_date required' });
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (is_active) {
+      await conn.query('UPDATE academic_terms SET is_active = 0 WHERE id <> ?', [req.params.id]);
+    }
+
+    const [result] = await conn.query(
+      `
+      UPDATE academic_terms
+      SET name = ?, academic_year = ?, semester = ?, start_date = ?, end_date = ?, is_active = ?
+      WHERE id = ?
+    `,
+      [name, academic_year, Number(semester), start_date, end_date, is_active ? 1 : 0, req.params.id]
+    );
+
+    if (result.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Term not found' });
+    }
+
+    await conn.commit();
+    res.json({
+      id: Number(req.params.id),
+      name,
+      academic_year,
+      semester: Number(semester),
+      start_date,
+      end_date,
+      is_active: is_active ? 1 : 0,
+    });
+  } catch (err) {
+    await conn.rollback();
+    handleDbError(res, err);
+  } finally {
+    conn.release();
+  }
+});
+
 // GET /api/admin/classes
 router.get('/classes', auth(['admin', 'hod', 'teacher']), async (req, res) => {
   try {
@@ -114,7 +215,7 @@ router.get('/classes', auth(['admin', 'hod', 'teacher']), async (req, res) => {
     }
 
     const [rows] = await db.query(`
-      SELECT c.id, c.name, c.section, c.department_id, d.name AS department
+      SELECT c.id, c.name, c.section, c.department_id, c.attendance_threshold, d.name AS department
       FROM classes c
       JOIN departments d ON c.department_id = d.id
       ${where}
@@ -128,17 +229,19 @@ router.get('/classes', auth(['admin', 'hod', 'teacher']), async (req, res) => {
 
 // POST /api/admin/classes
 router.post('/classes', auth(['admin']), async (req, res) => {
-  const { name, section, department_id } = req.body;
+  const { name, section, department_id, attendance_threshold } = req.body;
   if (!name || !section || !department_id) {
     return res.status(400).json({ message: 'name, section, department_id required' });
   }
 
+  const threshold = normalizeThreshold(attendance_threshold);
+
   try {
     const [result] = await db.query(
-      'INSERT INTO classes (name, section, department_id) VALUES (?, ?, ?)',
-      [name, section, department_id]
+      'INSERT INTO classes (name, section, department_id, attendance_threshold) VALUES (?, ?, ?, ?)',
+      [name, section, department_id, threshold]
     );
-    res.status(201).json({ id: result.insertId, name, section, department_id });
+    res.status(201).json({ id: result.insertId, name, section, department_id, attendance_threshold: threshold });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
@@ -146,22 +249,52 @@ router.post('/classes', auth(['admin']), async (req, res) => {
 
 // PUT /api/admin/classes/:id
 router.put('/classes/:id', auth(['admin']), async (req, res) => {
-  const { name, section, department_id } = req.body;
+  const { name, section, department_id, attendance_threshold } = req.body;
   if (!name || !section || !department_id) {
     return res.status(400).json({ message: 'name, section, department_id required' });
   }
 
+  const threshold = normalizeThreshold(attendance_threshold);
+
   try {
     const [result] = await db.query(
-      'UPDATE classes SET name = ?, section = ?, department_id = ? WHERE id = ?',
-      [name, section, department_id, req.params.id]
+      'UPDATE classes SET name = ?, section = ?, department_id = ?, attendance_threshold = ? WHERE id = ?',
+      [name, section, department_id, threshold, req.params.id]
     );
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Class not found' });
     }
 
-    res.json({ id: Number(req.params.id), name, section, department_id });
+    res.json({ id: Number(req.params.id), name, section, department_id, attendance_threshold: threshold });
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+// PATCH /api/admin/classes/:id/threshold
+router.patch('/classes/:id/threshold', auth(['admin', 'hod']), async (req, res) => {
+  const { attendance_threshold } = req.body;
+  const threshold = normalizeThreshold(attendance_threshold);
+
+  try {
+    const params = [threshold, req.params.id];
+    const departmentFilter = req.user.role === 'hod' ? 'AND department_id = ?' : '';
+    if (req.user.role === 'hod') {
+      if (!requireDepartment(req, res)) return;
+      params.push(req.user.department_id);
+    }
+
+    const [result] = await db.query(
+      `UPDATE classes SET attendance_threshold = ? WHERE id = ? ${departmentFilter}`,
+      params
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Class not found' });
+    }
+
+    res.json({ id: Number(req.params.id), attendance_threshold: threshold });
   } catch (err) {
     handleDbError(res, err);
   }

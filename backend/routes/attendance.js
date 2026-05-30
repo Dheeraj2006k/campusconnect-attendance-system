@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const auth = require('../middleware/auth');
 const { sendAbsentSMS, sendAttendanceRiskAlerts } = require('../utils/smsService');
+const { resolveTermForDate } = require('../utils/academicTerms');
 
 async function canAccessSubject(user, subjectId) {
   if (user.role === 'admin') return true;
@@ -167,6 +168,11 @@ router.post('/mark', auth(['teacher']), async (req, res) => {
       return res.status(404).json({ message: 'Subject not found' });
     }
 
+    const term = await resolveTermForDate(date);
+    if (!term) {
+      return res.status(400).json({ message: 'No academic term is configured for this attendance date' });
+    }
+
     const [validStudents] = await conn.query(
       'SELECT id FROM students WHERE class_id = ? AND id IN (?)',
       [context.class_id, uniqueStudentIds]
@@ -206,10 +212,11 @@ router.post('/mark', auth(['teacher']), async (req, res) => {
       date,
       period_no,
       record.status,
+      term.id,
     ]);
 
     await conn.query(
-      `INSERT INTO attendance (student_id, subject_id, date, period_no, status)
+      `INSERT INTO attendance (student_id, subject_id, date, period_no, status, term_id)
        VALUES ?`,
       [values]
     );
@@ -222,16 +229,26 @@ router.post('/mark', auth(['teacher']), async (req, res) => {
     const absentIds = records
       .filter((record) => record.status === 'A')
       .map((record) => record.student_id);
+    const lateIds = records
+      .filter((record) => record.status === 'L')
+      .map((record) => record.student_id);
+    const queuedNotificationCount = absentIds.length + lateIds.length;
 
     const eventPayload = buildAttendanceEvent(context, date, period_no, records, {
-      sms_queued: absentIds.length,
+      sms_queued: queuedNotificationCount,
       risk_alerts_queued: records.length,
+      term_id: term.id,
+      term_name: term.name,
     });
     io.emit('attendance_marked', eventPayload);
     io.emit('attendanceMarked', eventPayload);
 
     if (absentIds.length > 0) {
-      sendAbsentSMS(absentIds, date).catch(console.error);
+      sendAbsentSMS(absentIds, date, subject_id, period_no, 'absent').catch(console.error);
+    }
+
+    if (lateIds.length > 0) {
+      sendAbsentSMS(lateIds, date, subject_id, period_no, 'late').catch(console.error);
     }
 
     sendAttendanceRiskAlerts(studentIds, subject_id).catch(console.error);
@@ -242,8 +259,9 @@ router.post('/mark', auth(['teacher']), async (req, res) => {
       present_count: eventPayload.present_count,
       absent_count: eventPayload.absent_count,
       late_count: eventPayload.late_count,
-      sms_queued: absentIds.length,
+      sms_queued: queuedNotificationCount,
       risk_alerts_queued: records.length,
+      term_id: term.id,
     });
   } catch (err) {
     if (transactionStarted) await conn.rollback();
@@ -394,7 +412,7 @@ router.patch('/:id', auth(['teacher', 'admin']), async (req, res) => {
       previous_status: record.previous_status,
       edited_by: req.user.id,
       edited_by_role: req.user.role,
-      sms_queued: status === 'A' && record.previous_status !== 'A' ? 1 : 0,
+      sms_queued: ['A', 'L'].includes(status) && record.previous_status !== status ? 1 : 0,
       risk_alerts_queued: 1,
     });
 
@@ -403,7 +421,11 @@ router.patch('/:id', auth(['teacher', 'admin']), async (req, res) => {
     io.emit('attendanceUpdated', eventPayload);
 
     if (status === 'A' && record.previous_status !== 'A') {
-      sendAbsentSMS([record.student_id], record.date).catch(console.error);
+      sendAbsentSMS([record.student_id], record.date, record.subject_id, record.period_no, 'absent').catch(console.error);
+    }
+
+    if (status === 'L' && record.previous_status !== 'L') {
+      sendAbsentSMS([record.student_id], record.date, record.subject_id, record.period_no, 'late').catch(console.error);
     }
 
     sendAttendanceRiskAlerts([record.student_id], record.subject_id).catch(console.error);

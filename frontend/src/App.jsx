@@ -10,6 +10,7 @@ import AdminStudents from './pages/AdminStudents';
 import AdminSubjects from './pages/AdminSubjects';
 import AdminTeachers from './pages/AdminTeachers';
 import AdminTimetable from './pages/AdminTimetable';
+import AdminTerms from './pages/AdminTerms';
 import TeacherAttendance from './pages/TeacherAttendance';
 import TeacherDashboard from './pages/TeacherDashboard';
 import TeacherReports from './pages/TeacherReports';
@@ -69,6 +70,14 @@ export default function App() {
             element={
               <ProtectedRoute roles={['admin']}>
                 <AdminSubjects />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/terms"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <AdminTerms />
               </ProtectedRoute>
             }
           />

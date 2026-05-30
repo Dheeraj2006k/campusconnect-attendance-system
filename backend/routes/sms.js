@@ -4,7 +4,7 @@ const db = require('../config/db');
 const auth = require('../middleware/auth');
 const { MAX_SMS_RETRIES, retryLoggedSMS } = require('../utils/smsService');
 
-const VALID_TRIGGER_TYPES = ['absent', 'streak', 'warning', 'weekly'];
+const VALID_TRIGGER_TYPES = ['absent', 'late', 'streak', 'warning', 'weekly'];
 const VALID_STATUSES = ['sent', 'failed'];
 
 function parsePositiveInt(value, fallback, max) {

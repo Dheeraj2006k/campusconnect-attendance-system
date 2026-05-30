@@ -1,8 +1,10 @@
 const nodemailer = require('nodemailer');
 const db = require('../config/db');
+const { DEFAULT_ATTENDANCE_THRESHOLD, normalizeThreshold } = require('./attendancePrediction');
+const { getActiveTerm } = require('./academicTerms');
 
 const MAX_SMS_RETRIES = 3;
-const LOW_ATTENDANCE_THRESHOLD = 75;
+const LOW_ATTENDANCE_THRESHOLD = DEFAULT_ATTENDANCE_THRESHOLD;
 
 let gmailTransporter;
 
@@ -49,7 +51,33 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-async function sendAbsentSMS(studentIds, date) {
+async function getSubjectNotificationLabel(subjectId) {
+  if (!subjectId) return null;
+
+  const [rows] = await db.query(
+    `
+    SELECT sub.name AS subject_name, c.name AS class_name, c.section
+    FROM subjects sub
+    JOIN classes c ON sub.class_id = c.id
+    WHERE sub.id = ?
+    LIMIT 1
+  `,
+    [subjectId]
+  );
+
+  if (!rows.length) return null;
+
+  const { subject_name, class_name, section } = rows[0];
+  return section
+    ? `${subject_name} (${class_name} - ${section})`
+    : `${subject_name} (${class_name})`;
+}
+
+async function sendAbsentSMS(studentIds, date, subjectId = null, periodNo = null, type = 'absent') {
+  const subjectLabel = await getSubjectNotificationLabel(subjectId);
+  const periodInfo = periodNo ? `, Period ${periodNo}` : '';
+  const classInfo = subjectLabel ? ` for ${subjectLabel}${periodInfo}` : '';
+
   for (const studentId of studentIds) {
     const [rows] = await db.query(
       `
@@ -64,9 +92,11 @@ async function sendAbsentSMS(studentIds, date) {
     if (!rows.length) continue;
 
     const { parent_email, email, name, roll_number } = rows[0];
-    const message = `Dear Parent, ${name} (${roll_number}) was marked ABSENT on ${date}. - MGIT Attendance System`;
+    const message = type === 'late'
+      ? `Dear Parent, ${name} (${roll_number}) was marked LATE${classInfo} on ${date}. - MGIT Attendance System`
+      : `Dear Parent, ${name} (${roll_number}) was marked ABSENT${classInfo} on ${date}. - MGIT Attendance System`;
 
-    await dispatchSMSWithRetry(parent_email || email, message, studentId, 'absent');
+    await dispatchSMSWithRetry(parent_email || email, message, studentId, type);
   }
 }
 
@@ -117,22 +147,30 @@ async function wasAlertSentToday(studentId, triggerType, messageMarker) {
 }
 
 async function sendLowAttendanceWarning(studentId, subjectId) {
+  const activeTerm = await getActiveTerm();
+  const termFilter = activeTerm ? 'AND a.term_id = ?' : '';
+  const params = activeTerm ? [studentId, subjectId, activeTerm.id] : [studentId, subjectId];
+
   const [rows] = await db.query(
     `
     SELECT
       COUNT(*) AS total_classes,
       SUM(a.status = 'P') AS present,
       ROUND(SUM(a.status = 'P') * 100.0 / COUNT(*), 2) AS percentage,
-      sub.name AS subject_name
+      sub.name AS subject_name,
+      c.attendance_threshold
     FROM attendance a
     JOIN subjects sub ON a.subject_id = sub.id
-    WHERE a.student_id = ? AND a.subject_id = ?
-    GROUP BY sub.id, sub.name
+    JOIN classes c ON sub.class_id = c.id
+    WHERE a.student_id = ? AND a.subject_id = ? ${termFilter}
+    GROUP BY sub.id, sub.name, c.attendance_threshold
   `,
-    [studentId, subjectId]
+    params
   );
 
-  if (!rows.length || Number(rows[0].percentage) >= LOW_ATTENDANCE_THRESHOLD) {
+  const threshold = normalizeThreshold(rows[0]?.attendance_threshold);
+
+  if (!rows.length || Number(rows[0].percentage) >= threshold) {
     return null;
   }
 
@@ -145,7 +183,7 @@ async function sendLowAttendanceWarning(studentId, subjectId) {
     return null;
   }
 
-  const message = `Attendance Warning: ${profile.name} (${profile.roll_number}) has ${rows[0].percentage}% in ${subjectName} attendance, below ${LOW_ATTENDANCE_THRESHOLD}%. - MGIT`;
+  const message = `Attendance Warning: ${profile.name} (${profile.roll_number}) has ${rows[0].percentage}% in ${subjectName} attendance, below ${threshold}%. - MGIT`;
   return dispatchSMSWithRetry(profile.parent_email || profile.email, message, studentId, 'warning');
 }
 

@@ -10,6 +10,7 @@ const navItems = {
     ['Teachers', '/admin/teachers', 'TC'],
     ['HODs', '/admin/hods', 'HD'],
     ['Classes', '/admin/classes', 'CL'],
+    ['Terms', '/admin/terms', 'TM'],
     ['Subjects', '/admin/subjects', 'SB'],
     ['Timetable', '/admin/timetable', 'TT'],
     ['Reports', '/admin/reports', 'RP'],

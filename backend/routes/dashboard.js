@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const auth = require('../middleware/auth');
-
-const LOW_ATTENDANCE_THRESHOLD = Number(process.env.LOW_ATTENDANCE_THRESHOLD || 75);
+const {
+  calculateAttendancePrediction,
+  normalizeThreshold,
+} = require('../utils/attendancePrediction');
+const { getActiveTerm } = require('../utils/academicTerms');
 
 async function getScalar(sql, params = []) {
   const [rows] = await db.query(sql, params);
@@ -13,9 +16,10 @@ async function getScalar(sql, params = []) {
 async function getStudentForUser(userId) {
   const [rows] = await db.query(
     `
-    SELECT s.id, s.class_id, s.roll_number, s.parent_phone, u.name, u.email
+    SELECT s.id, s.class_id, s.roll_number, s.parent_phone, u.name, u.email, c.attendance_threshold
     FROM students s
     JOIN users u ON s.user_id = u.id
+    JOIN classes c ON s.class_id = c.id
     WHERE s.user_id = ?
     LIMIT 1
   `,
@@ -221,6 +225,10 @@ async function getStudentOverview(user) {
   if (!student) {
     return { error: { status: 404, message: 'Student profile not found' } };
   }
+  const threshold = normalizeThreshold(student.attendance_threshold);
+  const activeTerm = await getActiveTerm();
+  const termFilter = activeTerm ? 'AND term_id = ?' : '';
+  const termParams = activeTerm ? [activeTerm.id] : [];
 
   const [summary] = await db.query(
     `
@@ -231,9 +239,9 @@ async function getStudentOverview(user) {
       COALESCE(SUM(status = 'L'), 0) AS late,
       ROUND(COALESCE(SUM(status = 'P'), 0) * 100.0 / NULLIF(COUNT(*), 0), 2) AS percentage
     FROM attendance
-    WHERE student_id = ?
+    WHERE student_id = ? ${termFilter}
   `,
-    [student.id]
+    [student.id, ...termParams]
   );
 
   const [lowSubjects] = await db.query(
@@ -242,30 +250,49 @@ async function getStudentOverview(user) {
       sub.id AS subject_id,
       sub.name AS subject,
       COUNT(a.id) AS total_classes,
+      COALESCE(SUM(a.status = 'P'), 0) AS present,
+      COALESCE(SUM(a.status = 'A'), 0) AS absent,
+      COALESCE(SUM(a.status = 'L'), 0) AS late,
       ROUND(COALESCE(SUM(a.status = 'P'), 0) * 100.0 / NULLIF(COUNT(a.id), 0), 2) AS percentage
     FROM subjects sub
-    LEFT JOIN attendance a ON a.subject_id = sub.id AND a.student_id = ?
+    LEFT JOIN attendance a ON a.subject_id = sub.id AND a.student_id = ? ${activeTerm ? 'AND a.term_id = ?' : ''}
     WHERE sub.class_id = ?
     GROUP BY sub.id, sub.name
     HAVING total_classes > 0 AND percentage < ?
     ORDER BY percentage ASC
   `,
-    [student.id, student.class_id, LOW_ATTENDANCE_THRESHOLD]
+    [student.id, ...termParams, student.class_id, threshold]
   );
 
   const row = summary[0] || {};
+  const overallPrediction = calculateAttendancePrediction({
+    present: row.present,
+    total: row.total_classes,
+    threshold,
+  });
+  const lowSubjectsWithPrediction = lowSubjects.map((subject) => ({
+    ...subject,
+    ...calculateAttendancePrediction({
+      present: subject.present,
+      total: subject.total_classes,
+      threshold,
+    }),
+  }));
+
   return {
     scope: 'student',
     student,
-    threshold: LOW_ATTENDANCE_THRESHOLD,
+    threshold,
+    term: activeTerm,
     overall: {
       total_classes: Number(row.total_classes || 0),
       present: Number(row.present || 0),
       absent: Number(row.absent || 0),
       late: Number(row.late || 0),
       percentage: row.percentage === null ? null : Number(row.percentage || 0),
+      ...overallPrediction,
     },
-    low_subjects: lowSubjects,
+    low_subjects: lowSubjectsWithPrediction,
   };
 }
 

@@ -22,6 +22,13 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function getPredictionMetric(overall) {
+  if (!overall || overall.percentage === null || overall.percentage === undefined) return '--';
+  return overall.low_attendance
+    ? formatNumber(overall.classes_needed_to_reach_threshold)
+    : formatNumber(overall.classes_can_miss_safely);
+}
+
 export default function StudentDashboard() {
   const [overview, setOverview] = useState(null);
   const [report, setReport] = useState(null);
@@ -68,12 +75,27 @@ export default function StudentDashboard() {
   const overall = report?.overall || overview?.overall || {};
   const lowSubjects = report?.subject_summary?.filter((subject) => Boolean(subject.low_attendance)) || overview?.low_subjects || [];
   const recentHistory = useMemo(() => (report?.history || []).slice(0, 12), [report]);
+  const previousOverall = report?.previous_overall;
 
   return (
     <AppShell
       title="Student Attendance"
       subtitle="Review your attendance percentage, subject status, and period history."
     >
+      {!loading && overall.percentage !== null && overall.percentage !== undefined && (
+        <section className={`student-hero-panel${overall.low_attendance ? ' risk' : ' safe'}`}>
+          <div className="student-hero-copy">
+            <span className="hero-status-label">{overall.low_attendance ? 'Action Required' : 'Safe Zone'}</span>
+            <h2>{formatPercent(overall.percentage)}</h2>
+            <p>{overall.prediction_message}</p>
+          </div>
+          <div className="student-hero-metric">
+            <span>{overall.low_attendance ? 'Classes Needed' : 'Can Miss'}</span>
+            <strong>{getPredictionMetric(overall)}</strong>
+          </div>
+        </section>
+      )}
+
       <div className="page-grid">
         <div className={`stat-card${overall.low_attendance ? ' stat-card-danger' : ' stat-card-success'}`}>
           <p className="stat-label">Overall</p>
@@ -102,10 +124,53 @@ export default function StudentDashboard() {
       {!loading && lowSubjects.length > 0 && (
         <div className="student-warning">
           <div>
-            <strong>Attendance attention needed</strong>
+            <strong>Subject risk detected</strong>
             <span>{lowSubjects.length} subject{lowSubjects.length === 1 ? '' : 's'} below the {report?.threshold || overview?.threshold || 75}% threshold.</span>
           </div>
         </div>
+      )}
+
+      {!loading && (
+        <section className="panel-card semester-comparison-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Previous Semester</h2>
+              <p>{report?.term?.name ? `Current view: ${report.term.name}` : 'Current semester comparison.'}</p>
+            </div>
+            {previousOverall?.trend && previousOverall.has_data && (
+              <span className={`risk-badge${previousOverall.trend === 'declining' ? ' risk' : ''}`}>
+                {previousOverall.trend}
+              </span>
+            )}
+          </div>
+
+          {!previousOverall?.has_data && (
+            <div className="empty-state">
+              <h3>No previous semester data available</h3>
+              <p>Comparison will appear after older semester attendance is linked to an academic term.</p>
+            </div>
+          )}
+
+          {previousOverall?.has_data && (
+            <div className="comparison-grid">
+              <div>
+                <span>Previous</span>
+                <strong>{formatPercent(previousOverall.percentage)}</strong>
+                <small>{previousOverall.term?.name}</small>
+              </div>
+              <div>
+                <span>Current</span>
+                <strong>{formatPercent(overall.percentage)}</strong>
+                <small>{report?.term?.name}</small>
+              </div>
+              <div>
+                <span>Difference</span>
+                <strong>{previousOverall.difference_percentage > 0 ? '+' : ''}{formatPercent(previousOverall.difference_percentage)}</strong>
+                <small>{formatNumber(previousOverall.present)} / {formatNumber(previousOverall.total_classes)} previous</small>
+              </div>
+            </div>
+          )}
+        </section>
       )}
 
       <div className="student-dashboard-grid">
@@ -145,6 +210,7 @@ export default function StudentDashboard() {
                         <span>
                           {formatNumber(subject.present)} present · {formatNumber(subject.absent)} absent · {formatNumber(subject.late)} late
                         </span>
+                        {subject.prediction_message && <span>{subject.prediction_message}</span>}
                       </div>
                       <span className={`risk-badge${subject.low_attendance ? ' risk' : ''}`}>
                         {formatPercent(subject.percentage)}

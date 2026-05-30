@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
+import StudentReportModal from '../components/StudentReportModal';
 import api from '../api/axios';
 
 function formatNumber(value) {
@@ -20,12 +21,18 @@ function todayInputValue() {
 
 export default function TeacherReports() {
   const [classes, setClasses] = useState([]);
+  const [terms, setTerms] = useState([]);
   const [selectedClassId, setSelectedClassId] = useState('');
+  const [selectedTermId, setSelectedTermId] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState(todayInputValue());
   const [report, setReport] = useState(null);
+  const [selectedRiskSubjectId, setSelectedRiskSubjectId] = useState('');
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
+  const [studentDetail, setStudentDetail] = useState(null);
+  const [studentDetailLoading, setStudentDetailLoading] = useState(false);
+  const [studentDetailError, setStudentDetailError] = useState('');
   const [error, setError] = useState('');
 
   const classOptions = useMemo(
@@ -36,19 +43,50 @@ export default function TeacherReports() {
     [classes]
   );
 
+  const termOptions = useMemo(
+    () => terms.map((item) => ({
+      value: String(item.id),
+      label: `${item.name}${item.is_active ? ' (Active)' : ''}`,
+    })),
+    [terms]
+  );
+
   const lowAttendanceStudents = useMemo(
     () => (report?.student_summary || []).filter((student) => Boolean(student.low_attendance)),
     [report]
+  );
+
+  const riskSubjectOptions = useMemo(
+    () => (report?.subject_summary || []).map((subject) => ({
+      value: String(subject.subject_id),
+      label: subject.subject,
+    })),
+    [report]
+  );
+
+  const filteredRiskStudents = useMemo(
+    () => (report?.student_subject_summary || [])
+      .filter((student) => Boolean(student.low_attendance))
+      .filter((student) => !selectedRiskSubjectId || String(student.subject_id) === selectedRiskSubjectId),
+    [report, selectedRiskSubjectId]
   );
 
   async function loadClasses() {
     try {
       setLoading(true);
       setError('');
-      const res = await api.get('/admin/classes');
-      const loadedClasses = res.data || [];
+      const [classRes, termRes] = await Promise.all([
+        api.get('/admin/classes'),
+        api.get('/admin/terms'),
+      ]);
+      const loadedClasses = classRes.data || [];
+      const loadedTerms = termRes.data || [];
       setClasses(loadedClasses);
+      setTerms(loadedTerms);
       setSelectedClassId(loadedClasses[0]?.id ? String(loadedClasses[0].id) : '');
+      setSelectedTermId(loadedTerms.find((term) => term.is_active)?.id
+        ? String(loadedTerms.find((term) => term.is_active).id)
+        : loadedTerms[0]?.id ? String(loadedTerms[0].id) : '');
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to load assigned classes.');
     } finally {
@@ -65,10 +103,12 @@ export default function TeacherReports() {
     try {
       setReportLoading(true);
       setError('');
+      setSelectedRiskSubjectId('');
       const res = await api.get(`/reports/class/${selectedClassId}`, {
         params: {
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
+          term_id: selectedTermId || undefined,
         },
       });
       setReport(res.data);
@@ -79,13 +119,39 @@ export default function TeacherReports() {
     }
   }
 
+  async function openStudentDetail(studentId) {
+    try {
+      setStudentDetail(null);
+      setStudentDetailError('');
+      setStudentDetailLoading(true);
+      const res = await api.get(`/reports/student/${studentId}`, {
+        params: {
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          term_id: selectedTermId || undefined,
+        },
+      });
+      setStudentDetail(res.data);
+    } catch (err) {
+      setStudentDetailError(err.response?.data?.message || 'Unable to load student detail.');
+    } finally {
+      setStudentDetailLoading(false);
+    }
+  }
+
+  function closeStudentDetail() {
+    setStudentDetail(null);
+    setStudentDetailError('');
+    setStudentDetailLoading(false);
+  }
+
   useEffect(() => {
     loadClasses();
   }, []);
 
   useEffect(() => {
     loadReport();
-  }, [selectedClassId, dateFrom, dateTo]);
+  }, [selectedClassId, selectedTermId, dateFrom, dateTo]);
 
   return (
     <AppShell
@@ -112,6 +178,21 @@ export default function TeacherReports() {
             >
               <option value="">Select class</option>
               {classOptions.map((item) => (
+                <option value={item.value} key={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label className="form-label" htmlFor="teacher-report-term">Semester</label>
+            <select
+              id="teacher-report-term"
+              className="form-input"
+              value={selectedTermId}
+              onChange={(event) => setSelectedTermId(event.target.value)}
+            >
+              <option value="">Active semester</option>
+              {termOptions.map((item) => (
                 <option value={item.value} key={item.value}>{item.label}</option>
               ))}
             </select>
@@ -180,6 +261,67 @@ export default function TeacherReports() {
             </div>
           </div>
 
+          <section className="panel-card risk-list-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Risk Students</h2>
+                <p>Sorted worst first, with recovery classes shown per subject.</p>
+              </div>
+              <select
+                className="form-input compact-select"
+                value={selectedRiskSubjectId}
+                onChange={(event) => setSelectedRiskSubjectId(event.target.value)}
+              >
+                <option value="">All subjects</option>
+                {riskSubjectOptions.map((subject) => (
+                  <option value={subject.value} key={subject.value}>{subject.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {filteredRiskStudents.length === 0 && (
+              <div className="empty-state">
+                <h3>No at-risk students</h3>
+                <p>Students below {report.threshold}% will appear here.</p>
+              </div>
+            )}
+
+            {filteredRiskStudents.length > 0 && (
+              <div className="data-table-wrap">
+                <table className="data-table risk-table">
+                  <thead>
+                    <tr>
+                      <th>Roll No.</th>
+                      <th>Student</th>
+                      <th>Subject</th>
+                      <th>%</th>
+                      <th>Present / Total</th>
+                      <th>Needed</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRiskStudents.map((student) => (
+                      <tr key={`${student.student_id}-${student.subject_id}`}>
+                        <td><span className="status-badge">{student.roll_number}</span></td>
+                        <td><strong>{student.student_name}</strong></td>
+                        <td>{student.subject}</td>
+                        <td>{formatPercent(student.percentage)}</td>
+                        <td>{formatNumber(student.present)} / {formatNumber(student.total_classes)}</td>
+                        <td>{formatNumber(student.classes_needed_to_reach_threshold)}</td>
+                        <td>
+                          <button className="table-link-button" type="button" onClick={() => openStudentDetail(student.student_id)}>
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
           <div className="report-columns">
             <section className="panel-card">
               <div className="panel-heading">
@@ -202,6 +344,7 @@ export default function TeacherReports() {
                       <th>Late</th>
                       <th>%</th>
                       <th>Status</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -218,6 +361,11 @@ export default function TeacherReports() {
                           <span className={`risk-badge${student.low_attendance ? ' risk' : ''}`}>
                             {student.low_attendance ? 'Risk' : 'Good'}
                           </span>
+                        </td>
+                        <td>
+                          <button className="table-link-button" type="button" onClick={() => openStudentDetail(student.student_id)}>
+                            View
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -251,6 +399,15 @@ export default function TeacherReports() {
             </section>
           </div>
         </>
+      )}
+
+      {(studentDetail || studentDetailLoading || studentDetailError) && (
+        <StudentReportModal
+          report={studentDetail}
+          loading={studentDetailLoading}
+          error={studentDetailError}
+          onClose={closeStudentDetail}
+        />
       )}
     </AppShell>
   );

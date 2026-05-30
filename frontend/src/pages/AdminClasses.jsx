@@ -6,6 +6,7 @@ const emptyForm = {
   name: '',
   section: '',
   department_id: '',
+  attendance_threshold: '75',
 };
 
 export default function AdminClasses() {
@@ -58,6 +59,7 @@ export default function AdminClasses() {
       name: classItem.name || '',
       section: classItem.section || '',
       department_id: classItem.department_id ? String(classItem.department_id) : '',
+      attendance_threshold: classItem.attendance_threshold ? String(classItem.attendance_threshold) : '75',
     });
     setEditingId(classItem.id);
     setMessage('');
@@ -74,6 +76,7 @@ export default function AdminClasses() {
       name: form.name.trim(),
       section: form.section.trim().toUpperCase(),
       department_id: Number(form.department_id),
+      attendance_threshold: Number(form.attendance_threshold || 75),
     };
 
     try {
@@ -173,6 +176,23 @@ export default function AdminClasses() {
               </select>
             </div>
 
+            <div className="form-field">
+              <label className="form-label" htmlFor="class-threshold">
+                Attendance threshold %
+              </label>
+              <input
+                id="class-threshold"
+                className="form-input"
+                type="number"
+                min="1"
+                max="99"
+                step="0.01"
+                value={form.attendance_threshold}
+                onChange={(event) => updateField('attendance_threshold', event.target.value)}
+                required
+              />
+            </div>
+
             <div className="form-actions">
               <button className="primary-button" type="submit" disabled={saving || departments.length === 0}>
                 {saving ? 'Saving...' : editingId ? 'Update Class' : 'Create Class'}
@@ -221,6 +241,7 @@ export default function AdminClasses() {
                     <th>Class</th>
                     <th>Section</th>
                     <th>Department</th>
+                    <th>Threshold</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -235,6 +256,7 @@ export default function AdminClasses() {
                         <span className="status-badge">{classItem.section}</span>
                       </td>
                       <td>{classItem.department}</td>
+                      <td>{Number(classItem.attendance_threshold || 75).toFixed(2)}%</td>
                       <td>
                         <div className="table-actions">
                           <button type="button" onClick={() => startEdit(classItem)}>

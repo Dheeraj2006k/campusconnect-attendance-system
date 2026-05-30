@@ -30,7 +30,7 @@ export default function useAttendanceRealtime(onAttendanceEvent) {
     }
 
     const socket = io(socketUrl, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnectionAttempts: 3,
       reconnectionDelay: 2000,
     });

@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
 require('./cron');
+const ensureSchema = require('./config/ensureSchema');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,7 +15,10 @@ const corsOrigin = process.env.NODE_ENV === 'production'
       process.env.FRONTEND_URL,
       /\.vercel\.app$/  // allows all vercel preview URLs
     ]
-  : 'http://localhost:5173';
+  : [
+      /^http:\/\/localhost:\d+$/,
+      /^http:\/\/127\.0\.0\.1:\d+$/
+    ];
 
 const io = new Server(server, {
   cors: { origin: corsOrigin, methods: ['GET', 'POST'] }
@@ -45,4 +49,12 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+ensureSchema()
+  .then(() => {
+    server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('Failed to prepare database schema:', err);
+    process.exit(1);
+  });
